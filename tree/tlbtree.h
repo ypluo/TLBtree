@@ -12,11 +12,11 @@
 
 #include "pmallocator.h"
 #include "fixtree.h"
-#include "downtree256.h"
-#include "downtree512.h"
+#include "wotree256.h"
+#include "wotree512.h"
 
 // choose downtree type, providing the same interfaces: insert, find_lower, remove_lower, build_uptree, free_uptree
-#define DOWNTREE_NS downtree256
+#define DOWNTREE_NS wotree256
 // choose uptree type, providing the same interfaces: insert, remove, update, find
 #define UPTREE_NS   fixtree
 

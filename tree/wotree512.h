@@ -4,8 +4,8 @@
     USE AT YOUR OWN RISK!
 */
 
-#ifndef __DOWNTREE512__
-#define __DOWNTREE512__
+#ifndef __WOTREE512__
+#define __WOTREE512__
 
 #include <cstdint>
 #include <cstring>
@@ -15,7 +15,7 @@
 #include "flush.h"
 #include "pmallocator.h"
 
-namespace downtree512 {
+namespace wotree512 {
 using std::string;
 
 const int PAGESIZE = 512;
@@ -569,4 +569,4 @@ Node * get_lastnode(Node ** root_ptr) {
 
 } // namespace logfree
 
-#endif // __DOWNTREE512__
+#endif // __WOTREE512__

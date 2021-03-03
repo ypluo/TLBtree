@@ -4,8 +4,8 @@
     USE AT YOUR OWN RISK!
 */
 
-#ifndef __DOWNTREE256__
-#define __DOWNTREE256__
+#ifndef __WOTREE256__
+#define __WOTREE256__
 
 #include <cstdint>
 #include <cstring>
@@ -15,7 +15,7 @@
 #include "flush.h"
 #include "pmallocator.h"
 
-namespace downtree256 {
+namespace wotree256 {
     using std::string;
     constexpr int CARDINALITY = 13;
     constexpr int UNDERFLOW_CARD = 4;
@@ -538,4 +538,4 @@ namespace downtree256 {
         root->print("", true);
     }
 }
-#endif // __DOWNTREE256__
+#endif // __WOTREE256__
