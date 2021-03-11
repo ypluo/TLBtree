@@ -1,7 +1,7 @@
 CPP :=g++
 FLUSH_FLAG :=-DCLFLUSH 
-CFLAGS :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -O3
-CFLAGS_DEBUG :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -g -DDEBUG
+CFLAGS :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -O3 $(FLUSH_FLAG)
+CFLAGS_DEBUG :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -g -DDEBUG $(FLUSH_FLAG)
 
 TREES := tree/*.h
 LINK_LIB :=-lpmemobj -pthread
