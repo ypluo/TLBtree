@@ -17,22 +17,22 @@
 #include "pmallocator.h"
 
 namespace fixtree {
-    /*  Fixtree: a linearize tree structure which can absort moderate insertions: 
-        This tree is intended for search optimized so insertion may not be good
-    */
-    using _key_t = int64_t;
-
     const int INNER_CARD = 32; // node size: 256B, the fanout of inner node is 32
     const int LEAF_CARD = 16;  // node size: 256B, the fanout of leaf node is 16
     const int LEAF_REBUILD_CARD = 4;
     const int MAX_HEIGHT = 10;
 
+    // the entrance of fixtree that stores its persistent tree metadata
     struct entrance_t {
-        void * buff;
-        uint32_t height;
-        uint32_t level_offset[MAX_HEIGHT];
+        void * leaf_buff;
+        void * inner_buff;
+        uint32_t height; // the tree height
+        uint32_t leaf_cnt; 
     };
 
+/*  Fixtree: 
+        a search-optimized linearize tree structure which can absort moderate insertions: 
+*/
 class Fixtree {
     public:
         struct INNode { // inner node is packed keys, which is very compact
@@ -46,27 +46,27 @@ class Fixtree {
         } __attribute__((aligned(CACHE_LINE_SIZE)));
 
     public:
-        // linearized array for inner node and leaf node
+        // volatile structures
         INNode * inner_nodes_;
         LFNode * leaf_nodes_;
-
-        // Note: auxiliary structure
         uint32_t height_;
-        uint32_t level_offset_[MAX_HEIGHT]; // Nodes in level L <=> inner_nodes_[ level_offset_[L] : level_offset_[L - 1]]
-        /* 
-            Why we need a level_offset_ array?
-            We assume the inner tree to be a non-complete k-ary tree, which means that 
-            we can be more flexible than a complete tree. the leaf nodes needn't be power-of-k.
-
-            To make that possible, we need to maintain a offset array that record the base address
-            of each tree level in the inner nodes array
-        */
+        uint32_t leaf_cnt_;
+        entrance_t * entrance_;
+        uint32_t level_offset_[MAX_HEIGHT];
+    
     public:
-        Fixtree(entrance_t * ent, bool empty = false) { // build the tree from given entrance
-            inner_nodes_ = (INNode *)galc->absolute(ent->buff);
-            leaf_nodes_ = (LFNode *)(inner_nodes_ + ent->level_offset[0]);
+        Fixtree(entrance_t * ent, bool empty = false) { // recovery the tree from the entrance
+            inner_nodes_ = (INNode *)galc->absolute(ent->inner_buff);
+            leaf_nodes_ = (LFNode *)galc->absolute(ent->leaf_buff);
             height_ = ent->height;
-            memcpy(&(level_offset_[0]), &(ent->level_offset[0]), sizeof(uint32_t) * MAX_HEIGHT);
+            entrance_ = ent;
+
+            uint32_t tmp = 0;
+            for(int l = 0; l < height_; l++) {
+                level_offset_[l] = tmp;
+                tmp += std::pow(INNER_CARD, l);
+            }
+            level_offset_[height_] = tmp;
 
             if(empty) { // the tree contains no record
                 inner_nodes_[0].keys[0] = 0;
@@ -79,82 +79,86 @@ class Fixtree {
             }
         }
 
-        Fixtree(std::vector<Record> records) { // build a tree from recocds 
-            height_ = 0;
+        Fixtree(std::vector<Record> records) {
             const int lfary = LEAF_REBUILD_CARD;
-
-            // caculate the leaf node count
-            int lfnode_cnt = std::ceil((float)records.size() / lfary);
-            // caculate the inner node count and tree height
-            int innode_cnt = 0;
-            int cur_level_cnt = lfnode_cnt; // inner node count of current level
-            while((float)cur_level_cnt / INNER_CARD > 1) {
-                height_ += 1;
-                cur_level_cnt = std::ceil((float)cur_level_cnt / INNER_CARD);
-                innode_cnt += cur_level_cnt;
-            }
-            // along with the root node
-            height_ += 1;
-            innode_cnt += 1;
-
-            // alloate the inner node and leaf node space
-            void * buff = galc->malloc(std::max((size_t)4096, innode_cnt * sizeof(INNode) + lfnode_cnt * sizeof(LFNode)));
-            inner_nodes_ = (INNode *)buff;
-            leaf_nodes_ = (LFNode *) (inner_nodes_ + innode_cnt);
             
-            // fill the leaf nodes
+            uint32_t lfnode_cnt = std::ceil((float)records.size() / lfary);
+            leaf_nodes_ = (LFNode *) galc->malloc(std::max((size_t)4096, lfnode_cnt * sizeof(LFNode)));
+
+            height_ = std::ceil(std::log(std::max((uint32_t)INNER_CARD, lfnode_cnt)) / std::log(INNER_CARD));
+            uint32_t innode_cnt = (std::pow(INNER_CARD, height_) - 1) / (INNER_CARD - 1);
+            inner_nodes_ = (INNode *) galc->malloc(std::max((size_t)4096, innode_cnt * sizeof(INNode)));
+
+            // fill leaf nodes
             for(int i = 0; i < records.size(); i++) {
                 leaf_nodes_[i / lfary].keys[i % lfary] = records[i].key;
                 leaf_nodes_[i / lfary].vals[i % lfary] = records[i].val;
             }
             clwb(leaf_nodes_, sizeof(LFNode) * lfnode_cnt);
             
-            // fill last level inner node
-            for(int i = 0; i < lfnode_cnt; i++) { // extract the first key of each leaf node
-                inner_insert(i / INNER_CARD, i % INNER_CARD, leaf_nodes_[i].keys[0]);
-            }
-            if(lfnode_cnt % INNER_CARD != 0) // mark the end of the inner node
-                inner_insert(lfnode_cnt / INNER_CARD, lfnode_cnt % INNER_CARD, INT64_MAX);
+            int cur_level_cnt = lfnode_cnt;
+            int cur_level_off = innode_cnt - std::pow(INNER_CARD, height_ - 1);
+            int last_level_off = 0;
             
-            // fill other inner node
-            cur_level_cnt = lfnode_cnt; // inner node count of current level
-            level_offset_[height_] = 0;
-            for(int l = height_ - 1; l > 0; l--) {
+            // fill parent innodes of leaf nodes
+            for(int i = 0; i < cur_level_cnt; i++)
+                inner_insert(cur_level_off + i / INNER_CARD, i % INNER_CARD, leaf_nodes_[i].keys[0]);
+            if(cur_level_cnt % INNER_CARD)
+                inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, INT64_MAX);
+            clwb(&inner_nodes_[cur_level_off], sizeof(INNode) * (cur_level_cnt / INNER_CARD + 1));
+            
+            cur_level_cnt = std::ceil((float)cur_level_cnt / INNER_CARD);
+            last_level_off = cur_level_off;
+            cur_level_off = cur_level_off - std::pow(INNER_CARD, height_ - 2);
+
+            // fill other inner nodes
+            for(int l = height_ - 2; l >= 0; l--) { // level by level
+                for(int i = 0; i < cur_level_cnt; i++)
+                    inner_insert(cur_level_off + i / INNER_CARD, i % INNER_CARD, inner_nodes_[last_level_off + i].keys[0]);
+                if(cur_level_cnt % INNER_CARD)
+                    inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, INT64_MAX);
+                clwb(&inner_nodes_[cur_level_off], sizeof(INNode) * (cur_level_cnt / INNER_CARD + 1));
+
                 cur_level_cnt = std::ceil((float)cur_level_cnt / INNER_CARD);
-
-                level_offset_[l] = level_offset_[l + 1] + cur_level_cnt;
-                for(int i = 0; i < cur_level_cnt; i++) { // extract the first key of each inner node of current level
-                    inner_insert(level_offset_[l] + i / INNER_CARD, i % INNER_CARD,
-                        inner_nodes_[level_offset_[l + 1] + i].keys[0]);
-                }
-                if(cur_level_cnt % INNER_CARD != 0)
-                    inner_insert(level_offset_[l] + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, INT64_MAX);
+                last_level_off = cur_level_off;
+                cur_level_off = cur_level_off - std::pow(INNER_CARD, l - 1);
             }
-            level_offset_[0] = innode_cnt;
+            
+            leaf_cnt_ = lfnode_cnt;
+            entrance_ = (entrance_t *)galc->malloc(sizeof(entrance_t));
+            uint32_t tmp = 0;
+            for(int l = 0; l < height_; l++) {
+                level_offset_[l] = tmp;
+                tmp += std::pow(INNER_CARD, l);
+            }
+            level_offset_[height_] = tmp;
 
-            clwb(buff, sizeof(INNode) * innode_cnt);
-            mfence();
+            persist_assign(&(entrance_->leaf_buff), (void *) galc->relative(leaf_nodes_));
+            persist_assign(&(entrance_->inner_buff), (void *) galc->relative(inner_nodes_));
+            persist_assign(&(entrance_->height), height_);
+            persist_assign(&(entrance_->leaf_cnt), lfnode_cnt);
+
+            return ;
         }
 
     public:
         char ** find_lower(_key_t key) { 
         /* linear search, return the position of the stored value */
-            int cur_idx = level_offset_[1];
-            for(int l = 1; l < height_; l++) {
+            int cur_idx = level_offset_[0];
+            for(int l = 0; l < height_; l++) {
                 #ifdef DEBUG
                     INNode * inner = inner_nodes_ + cur_idx; 
                 #endif
                 cur_idx = level_offset_[l + 1] + (cur_idx - level_offset_[l]) * INNER_CARD + inner_search(cur_idx, key);
             }
-            
-            cur_idx = (cur_idx - level_offset_[height_]) * INNER_CARD + inner_search(cur_idx, key);
+            cur_idx = cur_idx -= level_offset_[height_];
 
             return leaf_search(cur_idx, key);
         }
 
         bool insert(_key_t key, _value_t val) {
-            int cur_idx = level_offset_[1];
-            for(int l = 1; l < height_; l++) {
+            uint32_t cur_idx = level_offset_[0];
+            for(int l = 0; l < height_; l++) {
                 #ifdef DEBUG
                     INNode * inner = inner_nodes_ + cur_idx; 
                 #endif
@@ -173,9 +177,9 @@ class Fixtree {
             return false;
         }
 
-        bool try_remove(_key_t key, bool & need_rebuild) {
-            int cur_idx = level_offset_[1];
-            for(int l = 1; l < height_; l++) {
+        bool try_remove(_key_t key) {
+            int cur_idx = level_offset_[0];
+            for(int l = 0; l < height_; l++) {
                 #ifdef DEBUG
                     INNode * inner = inner_nodes_ + cur_idx; 
                 #endif
@@ -204,18 +208,27 @@ class Fixtree {
                   3. | k1 | --- | kx |, delete kx, leaf is not empty if kx is deleted (success)
             */
             if(max_leqi == 0 && rec_cnt > 1) { // case 1
-                need_rebuild = false;
                 return false;
-            } else if (max_leqi == 0) { // case 2
-                persist_assign(&(cur_leaf->keys[0]), INT64_MAX);
-                
-                need_rebuild = true;
-                return true;
-            } else { // case 3
+            } else { // case 2, 3
                 persist_assign(&(cur_leaf->keys[max_leqi]), INT64_MAX);
-
-                need_rebuild = false;
                 return true;
+            }
+        }
+
+        void printAll() {
+            for(int l = 0; l < height_; l++) {
+                printf("level: %d =>", l);
+                
+                for(int i = level_offset_[l]; i < level_offset_[l + 1]; i++) {
+                    inner_print(i);
+                }
+                printf("\n");
+            }
+
+            printf("leafs");
+
+            for(int i = 0; i < leaf_cnt_; i++) {
+                leaf_print(i);
             }
         }
 
@@ -223,24 +236,58 @@ class Fixtree {
             return (char **)&(leaf_nodes_[0].vals[0]);
         }
 
-        void printAll() {
-            for(int l = 1; l <= height_; l++) {
-                printf("level: %d =>", l);
-                
-                for(int i = level_offset_[l]; i < level_offset_[l - 1]; i++) {
-                    inner_print(i);
-                }
-                printf("\n");
+        void merge(std::vector<Record> & in, std::vector<Record> & out) { // merge the records with in to out
+            uint32_t insize = in.size();
 
-                if(l == height_) {
-                    int m = 0;
-                    for(int i = level_offset_[l]; i < level_offset_[l - 1]; i++) {
-                        for(int j = 0; j < INNER_CARD; j++) {
-                            if(inner_nodes_[i].keys[j] == INT64_MAX) {
-                                break;
-                            }
-                            leaf_print(m++);
-                        }
+            uint32_t incur = 0, innode_pos = 0, cur_lfcnt = 0;
+
+            _key_t k1 = in[0].key, k2 = leaf_nodes_[0].keys[0];
+            while(incur < insize && cur_lfcnt < leaf_cnt_) {
+                if(k1 == k2) { 
+                    out.push_back(in[incur]);
+
+                    incur += 1;
+
+                    innode_pos += 1;
+                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                        cur_lfcnt += 1;
+                        innode_pos = 0;
+                    }
+
+                    k1 = in[incur].key;
+                    k2 = leaf_nodes_[cur_lfcnt].keys[innode_pos];
+                } else if(k1 > k2) {
+                    out.push_back({leaf_nodes_[cur_lfcnt].keys[innode_pos], (char *)leaf_nodes_[cur_lfcnt].vals[innode_pos]});
+
+                    innode_pos += 1;
+                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                        cur_lfcnt += 1;
+                        innode_pos = 0;
+                    }
+
+                    k2 = leaf_nodes_[cur_lfcnt].keys[innode_pos];
+                } else {
+                    out.push_back(in[incur]);
+                    
+                    incur += 1;
+
+                    k1 = in[incur].key;
+                }
+            }
+
+            if(incur < insize) {
+                for(int i = incur; i < insize; i++) 
+                    out.push_back(in[i]);
+            }
+
+            if(cur_lfcnt < leaf_cnt_) {
+                while(cur_lfcnt < leaf_cnt_) {
+                    out.push_back({leaf_nodes_[cur_lfcnt].keys[innode_pos], (char *)leaf_nodes_[cur_lfcnt].vals[innode_pos]});
+
+                    innode_pos += 1;
+                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                        cur_lfcnt += 1;
+                        innode_pos = 0;
                     }
                 }
             }
@@ -305,23 +352,15 @@ class Fixtree {
         }
 };
 
-entrance_t * build_uptree(std::vector<Record> & records, Fixtree * &new_tree) {
-    new_tree = new Fixtree(records);
-    entrance_t * new_upent = (entrance_t *)galc->malloc(sizeof(entrance_t));
-    new_upent->buff = galc->relative(new_tree->inner_nodes_);
-    new_upent->height = new_tree->height_;
-    memcpy(&(new_upent->level_offset[0]), &(new_tree->level_offset_[0]), sizeof(new_tree->level_offset_));
-    clwb(new_upent, sizeof(entrance_t));
-    mfence();
-
-    return new_upent;
+entrance_t * get_entrance(Fixtree * tree) {
+    return tree->entrance_;
 }
 
-void free_uptree(entrance_t * upent) {
-    if (upent->buff != NULL)
-        galc->free(galc->absolute(upent->buff));
+void free(entrance_t * upent) {
+    galc->free(galc->absolute(upent->inner_buff));
+    galc->free(galc->absolute(upent->leaf_buff));
     galc->free(upent);
-    
+
     return ;
 }
 

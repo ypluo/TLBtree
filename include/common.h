@@ -22,6 +22,9 @@ struct Record {
     _key_t key;
     char * val; 
     Record(_key_t k=INT64_MAX, char * v=NULL) : key(k), val(v) {}
+    bool operator < (const Record & other) {
+        return key < other.key;
+    }
 };
 
 enum OperationType {READ = 0, INSERT, UPDATE, DELETE};
