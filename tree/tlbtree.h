@@ -17,9 +17,9 @@
 #include "wotree256.h"
 #include "wotree512.h"
 
-// choose uptree type, providing interfaces: insert, remove, update, find
+// choose uptree type, providing interfaces: insert, remove, update, find, merge, free_uptree
 #define UPTREE_NS   fixtree
-// choose downtree type, providing interfaces: insert, find_lower, remove_lower, merge, free_uptree
+// choose downtree type, providing interfaces: insert, find_lower, remove_lower
 #define DOWNTREE_NS wotree256
 
 namespace tlbtree {
@@ -33,64 +33,96 @@ private:
     typedef TLBtree<DOWNLEVEL, REBUILD_THRESHOLD> SelfType;
     
     // the entrance of TLBtree that stores its persistent tree metadata
-    struct tlbtree_entrance_t{
+    struct tlbtree_entrance_t {
         UPTREE_NS::entrance_t * upent; // the entrance of the top layer
-        bool is_rebuilding;          // a mutex for exclusive rebuilding
-        bool is_clean;                  // is TLBtree shutdown expectedly
+        Record * restore;              // restore subroots that fails to insert into the top layer
+        int restore_size;
+        bool is_clean;                 // is TLBtree shutdown expectedly
+        bool use_rebuild_recover;      // whether to use recover rebuilding next time
     };
     
     // volatile domain
     UPTREE_NS::uptree_t * uptree_;
     tlbtree_entrance_t * entrance_;
-    vector<Record> mutable_;
-    vector<Record> immutable_;
+    vector<Record> * mutable_;
     Spinlock rebuild_mtx_;
+    //Spinlock mutable_mtx_;
+    bool is_rebuilding_;
 
 public:
     TLBtree(string path, bool recover=true, string id = "tlbtree") {
+        mutable_ = new vector<Record>(0xfff);
+        bool is_rebuilding_ = false;
+        
         if(recover == false) {
             galc = new PMAllocator(path.c_str(), false, id.c_str());
+            // initialize entrance_
             entrance_ = (tlbtree_entrance_t *) galc->get_root(sizeof(tlbtree_entrance_t));
             entrance_->upent = NULL;
-            entrance_->is_clean =  false;
-            entrance_->is_rebuilding = false;
+            entrance_->restore = NULL;
+            entrance_->restore_size = 0;
+            entrance_->is_clean = false;
+            entrance_->use_rebuild_recover = false;
             clwb(entrance_, sizeof(tlbtree_entrance_t));
             
             //allocate a entrance_ to the fixtree
-            std::vector<Record> init = {Record(0, (char *)galc->relative(new Node(true)))}; 
-
+            std::vector<Record> init = {Record(0, (char *)galc->relative(new Node()))}; 
             uptree_ = new UPTREE_NS::uptree_t(init);
-            UPTREE_NS::entrance_t * uptree_entrance = UPTREE_NS::get_entrance(uptree_);
-
-            UPTREE_NS::entrance_t *a = entrance_->upent;
-            persist_assign(&(entrance_->upent), galc->relative(uptree_entrance));
+            persist_assign(&(entrance_->upent), galc->relative(UPTREE_NS::get_entrance(uptree_)));
+            persist_assign(&(entrance_->use_rebuild_recover), false); // use fast rebuilding next time
         } else {
             galc = new PMAllocator(path.c_str(), true, id.c_str());
 
             entrance_ = (tlbtree_entrance_t *) galc->get_root(sizeof(tlbtree_entrance_t));
-            if(entrance_->upent == NULL) { // empty tree
+            if(entrance_ == NULL || entrance_->upent == NULL) { // empty tree
                 printf("the tree is empty\n");
                 exit(-1);
             }
 
-            uptree_ = new UPTREE_NS::uptree_t (galc->absolute(entrance_->upent));
+            if(entrance_->is_clean == false) { // TLBtree crashed at last usage
+                persist_assign(&(entrance_->use_rebuild_recover), true); // use recover rebuilding next time
+            } else { // normal shutdown
+                // recover all subroots from PM back to mutable_, within miliseconds
+                Record * rec = galc->absolute(entrance_->restore);
+                for(int i = 0; i < entrance_->restore_size; i++) {
+                    mutable_->push_back(rec[i]);
+                }
+                entrance_->restore = NULL;
+                entrance_->restore_size = 0;
+                clwb(&entrance_->restore, 16);
+                galc->free(rec);
+            }
 
-            if(entrance_->is_clean == false && entrance_->is_rebuilding == true) {
-                rebuild_recover();
-            }   
+            uptree_ = new UPTREE_NS::uptree_t (galc->absolute(entrance_->upent));
         }
 
         persist_assign(&(entrance_->is_clean), false); // set the TLBtree state to be dirty
     }
 
     ~TLBtree() {
+        if(entrance_->use_rebuild_recover == false) { // fast rebuilding next time
+            // save all subroots in mutable_ into PM
+            Record * rec = (Record *) galc->malloc(std::max((size_t)4096, mutable_->size() * sizeof(Record)));
+            for(int i = 0; i < mutable_->size(); i++) {
+                rec[i] = (*mutable_)[i];
+            }
+            clwb(rec, mutable_->size() * sizeof(Record));
+            mfence();
+            entrance_->restore = galc->relative(rec);
+            entrance_->restore_size = mutable_->size();
+            clwb(&entrance_->restore, 16);
+        }
+
+
         persist_assign(&(entrance_->is_clean), true); // a intended shutdown
+
         delete uptree_;
+        delete mutable_;
         delete galc;
     }
 
 public: // public interface
-    void insert(const _key_t & k, _value_t v) {  
+    void insert(const _key_t & k, _value_t v) { 
         Node ** root_ptr = (Node **)uptree_->find_lower(k);
         Node * downroot = (Node *)galc->absolute(*root_ptr);
  
@@ -106,17 +138,23 @@ public: // public interface
         }
         res_t insert_res = DOWNTREE_NS::insert(root_ptr, k, v, DOWNLEVEL);
 
-        // we rebuild if the search in the root chain take too long 
+        // we rebuild if the searching in the linklist is too long 
         if(goes_steps > REBUILD_THRESHOLD && rebuild_mtx_.trylock()) {
-            immutable_.swap(mutable_); // make the mutable vector be immutable
-            
-            #ifdef BACKGROUND_REBUILD
-                std::thread rebuild_thread(&SelfType::rebuild, this);
-                rebuild_thread.detach();
-            #else
-                rebuild();
-            #endif
-            rebuild_mtx_.unlock();
+            if(entrance_->use_rebuild_recover == true) {
+                #ifdef BACKGROUND_REBUILD
+                    std::thread rebuild_thread(&SelfType::rebuild_recover, this);
+                    rebuild_thread.detach();
+                #else
+                    rebuild_recover();
+                #endif
+            } else {
+                #ifdef BACKGROUND_REBUILD
+                    std::thread rebuild_thread(&SelfType::rebuild_fast, this);
+                    rebuild_thread.detach();
+                #else
+                    rebuild_fast();
+                #endif
+            } 
         }
 
         if(insert_res.flag == true) { // a sub-index tree is splitted
@@ -124,8 +162,10 @@ public: // public interface
             bool succ = uptree_->insert(insert_res.rec.key, (_value_t)galc->relative(insert_res.rec.val));
             
             // save these records into mutable_
-            if(entrance_->is_rebuilding == true || succ == false) {
-                mutable_.push_back({insert_res.rec.key, (char *)galc->relative(insert_res.rec.val)}); // TODO: data race
+            if(is_rebuilding_ == true || succ == false) {
+                //mutable_mtx_.lock();
+                mutable_->push_back({insert_res.rec.key, (char *)galc->relative(insert_res.rec.val)});
+                //mutable_mtx_.unlock();
             }
         }
     }
@@ -189,16 +229,23 @@ public: // public interface
     }
 
 private:
-    void rebuild() { // rebuilding function one
-        persist_assign(&(entrance_->is_rebuilding), true); 
+    void rebuild_fast() { // fast rebuilding function
+        // switch the restore to be immutable
+        vector<Record> * new_mutable = new vector<Record>(0xfff);
+        vector<Record> * immutable = mutable_; // make the restore vector be immutable
+        //mutable_mtx_.lock();
+        mutable_ = new_mutable; // before this line, the mutable_ is still the old one
+        //mutable_mtx_.unlock();
 
-        std::sort(immutable_.begin(), immutable_.end());
+        is_rebuilding_ = true;
+
+        std::sort(immutable->begin(), immutable->end());
         // get the snapshot of all sub-index trees by combining the top layer with immutable
         std::vector<Record> subroots;
         subroots.reserve(0x2fffff);
-        uptree_->merge(immutable_, subroots);
+        uptree_->merge(*immutable, subroots);
 
-        /* rebuild the top layer with immutable_ */  
+        /* rebuild the top layer with immutable */  
         UPTREE_NS::uptree_t * old_tree = uptree_;
         UPTREE_NS::entrance_t * old_upent = galc->absolute(entrance_->upent);
         UPTREE_NS::uptree_t * new_tree = new UPTREE_NS::uptree_t(subroots);
@@ -210,21 +257,22 @@ private:
         
         /* free the old top layer */
         #ifdef BACKGROUND_REBUILD
-            usleep(100); // TODO: wait until on-going readers finish
+            usleep(50); // TODO: wait until on-going readers finish
         #endif
-        delete old_tree;            // free the volatile object
-        UPTREE_NS::free(old_upent); // free the PM space
-        
-        // clear the immutable_ and finish rebuilding
-        immutable_.clear();
-        
-        persist_assign(&(entrance_->is_rebuilding), false);
+        UPTREE_NS::free(old_tree); // free the old_tree
+    
+        is_rebuilding_ = false;
+        rebuild_mtx_.unlock();
+
+        delete immutable;
     }
 
-    void rebuild_recover() { // rebuilding function two
+    void rebuild_recover() { // slowee rebuilding function 
+        is_rebuilding_ = true;
         // get the snapshot of all sub-index trees by traverse in the down layer
         std::vector<Record> subroots;
         subroots.reserve(0x2fffff);
+        
         _key_t split_key = 0; 
         Node ** sibling_ptr = (Node **)uptree_->find_first();
         Node * cur_root = (Node *)galc->absolute(*sibling_ptr);
@@ -235,7 +283,7 @@ private:
             cur_root = galc->absolute(*sibling_ptr);
         }
 
-        /* rebuild the top layer with immutable_ */  
+        /* rebuild the top layer with immutable */  
         UPTREE_NS::uptree_t * old_tree = uptree_;
         UPTREE_NS::entrance_t * old_upent = galc->absolute(entrance_->upent);
         UPTREE_NS::uptree_t * new_tree = new UPTREE_NS::uptree_t(subroots);
@@ -246,8 +294,15 @@ private:
         uptree_ = new_tree;
         
         /* free the old top layer */
-        delete old_tree;            // free the volatile object
-        UPTREE_NS::free(old_upent); // free the PM space
+        #ifdef BACKGROUND_REBUILD
+            usleep(50); // TODO: wait until on-going readers finish
+        #endif
+        UPTREE_NS::free(old_tree); // free the old_tree
+
+        is_rebuilding_ = false;
+        rebuild_mtx_.unlock();
+
+        persist_assign(&(entrance_->use_rebuild_recover), false); // use fast rebuilding next time
     }
 };
 

@@ -91,6 +91,9 @@ class Fixtree {
 
             // fill leaf nodes
             for(int i = 0; i < records.size(); i++) {
+                if(i % lfary == 0) { // bugfixed: clear the node first
+                    memset(leaf_nodes_[i / lfary].keys, 0, LEAF_CARD * sizeof(_key_t));
+                }
                 leaf_nodes_[i / lfary].keys[i % lfary] = records[i].key;
                 leaf_nodes_[i / lfary].vals[i % lfary] = records[i].val;
             }
@@ -125,7 +128,7 @@ class Fixtree {
             }
             
             leaf_cnt_ = lfnode_cnt;
-            entrance_ = (entrance_t *)galc->malloc(sizeof(entrance_t));
+            entrance_ = (entrance_t *)galc->malloc(4096); // the allocator is not thread_safe, allocate a large entrance
             uint32_t tmp = 0;
             for(int l = 0; l < height_; l++) {
                 level_offset_[l] = tmp;
@@ -143,7 +146,7 @@ class Fixtree {
 
     public:
         char ** find_lower(_key_t key) { 
-        /* linear search, return the position of the stored value */
+            /* linear search, return the position of the stored value */
             int cur_idx = level_offset_[0];
             for(int l = 0; l < height_; l++) {
                 #ifdef DEBUG
@@ -151,7 +154,7 @@ class Fixtree {
                 #endif
                 cur_idx = level_offset_[l + 1] + (cur_idx - level_offset_[l]) * INNER_CARD + inner_search(cur_idx, key);
             }
-            cur_idx = cur_idx -= level_offset_[height_];
+            cur_idx -= level_offset_[height_];
 
             return leaf_search(cur_idx, key);
         }
@@ -164,7 +167,7 @@ class Fixtree {
                 #endif
                 cur_idx = level_offset_[l + 1] + (cur_idx - level_offset_[l]) * INNER_CARD + inner_search(cur_idx, key);
             }
-            cur_idx = (cur_idx - level_offset_[height_]) * INNER_CARD + inner_search(cur_idx, key);
+            cur_idx -= level_offset_[height_];
             
             LFNode * cur_leaf = leaf_nodes_ + cur_idx;
 
@@ -185,7 +188,7 @@ class Fixtree {
                 #endif
                 cur_idx = level_offset_[l + 1] + (cur_idx - level_offset_[l]) * INNER_CARD + inner_search(cur_idx, key);
             }
-            cur_idx = (cur_idx - level_offset_[height_]) * INNER_CARD + inner_search(cur_idx, key);
+            cur_idx -= level_offset_[height_];
             
             LFNode * cur_leaf = leaf_nodes_ + cur_idx;
 
@@ -356,7 +359,10 @@ entrance_t * get_entrance(Fixtree * tree) {
     return tree->entrance_;
 }
 
-void free(entrance_t * upent) {
+void free(Fixtree * tree) {
+    entrance_t * upent = get_entrance(tree);
+    delete tree;
+
     galc->free(galc->absolute(upent->inner_buff));
     galc->free(galc->absolute(upent->leaf_buff));
     galc->free(upent);
