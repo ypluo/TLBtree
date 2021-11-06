@@ -42,7 +42,7 @@ class Fixtree {
         struct LFNode { // leaf node is packed key-ptr along with a header. 
                         // leaf node has some gap to absort insert
             _key_t keys[LEAF_CARD];
-            void * vals[LEAF_CARD];
+            char * vals[LEAF_CARD];
         } __attribute__((aligned(CACHE_LINE_SIZE)));
 
     public:
@@ -55,7 +55,7 @@ class Fixtree {
         uint32_t level_offset_[MAX_HEIGHT];
     
     public:
-        Fixtree(entrance_t * ent, bool empty = false) { // recovery the tree from the entrance
+        Fixtree(entrance_t * ent) { // recovery the tree from the entrance
             inner_nodes_ = (INNode *)galc->absolute(ent->inner_buff);
             leaf_nodes_ = (LFNode *)galc->absolute(ent->leaf_buff);
             height_ = ent->height;
@@ -67,22 +67,13 @@ class Fixtree {
                 tmp += std::pow(INNER_CARD, l);
             }
             level_offset_[height_] = tmp;
-
-            if(empty) { // the tree contains no record
-                inner_nodes_[0].keys[0] = 0;
-                for(int i = 1; i < INNER_CARD; i++)
-                    inner_nodes_[0].keys[i] = INT64_MAX;
-                
-                for(int i = 0; i < LEAF_CARD; i++) {
-                    leaf_nodes_[0].keys[i] = INT64_MAX;
-                }
-            }
         }
 
         Fixtree(std::vector<Record> records) {
             const int lfary = LEAF_REBUILD_CARD;
+            int record_count = records.size();
             
-            uint32_t lfnode_cnt = std::ceil((float)records.size() / lfary);
+            uint32_t lfnode_cnt = std::ceil((float)record_count / lfary);
             leaf_nodes_ = (LFNode *) galc->malloc(std::max((size_t)4096, lfnode_cnt * sizeof(LFNode)));
 
             height_ = std::ceil(std::log(std::max((uint32_t)INNER_CARD, lfnode_cnt)) / std::log(INNER_CARD));
@@ -90,14 +81,17 @@ class Fixtree {
             inner_nodes_ = (INNode *) galc->malloc(std::max((size_t)4096, innode_cnt * sizeof(INNode)));
 
             // fill leaf nodes
-            for(int i = 0; i < records.size(); i++) {
-                if(i % lfary == 0) { // bugfixed: clear the node first
-                    memset(leaf_nodes_[i / lfary].keys, 0, LEAF_CARD * sizeof(_key_t));
+            for(int i = 0; i < lfnode_cnt; i++) {
+                for(int j = 0; j < lfary; j++) {
+                    auto idx = i * lfary + j;
+                    leaf_nodes_[i].keys[j] = idx < record_count ? records[idx].key : INT64_MAX; 
+                    leaf_nodes_[i].vals[j] = idx < record_count ? records[idx].val : 0;
                 }
-                leaf_nodes_[i / lfary].keys[i % lfary] = records[i].key;
-                leaf_nodes_[i / lfary].vals[i % lfary] = records[i].val;
+                for(int j = lfary; j < LEAF_CARD; j++) { // intialized key
+                    leaf_nodes_[i].keys[j] = INT64_MAX;
+                }
+                clwb(leaf_nodes_ + i, sizeof(LFNode));
             }
-            clwb(leaf_nodes_, sizeof(LFNode) * lfnode_cnt);
             
             int cur_level_cnt = lfnode_cnt;
             int cur_level_off = innode_cnt - std::pow(INNER_CARD, height_ - 1);
@@ -172,7 +166,7 @@ class Fixtree {
             LFNode * cur_leaf = leaf_nodes_ + cur_idx;
 
             for(int i = 0; i < LEAF_CARD; i++) {
-                if (cur_leaf->keys[i] == INT64_MAX) { // empty
+                if (cur_leaf->keys[i] == INT64_MAX) { // empty slot
                     leaf_insert(cur_idx, i, {key, (char *)val});
                     return true;
                 }
@@ -192,11 +186,11 @@ class Fixtree {
             
             LFNode * cur_leaf = leaf_nodes_ + cur_idx;
 
-            _key_t max_leqkey = -1;
-            int8_t max_leqi = -1;
-            int8_t rec_cnt = 0;
-            for(int i = 0; i < LEAF_CARD; i++) {
-                if(cur_leaf->keys[i] < INT64_MAX) {
+            _key_t max_leqkey = cur_leaf->keys[0];
+            int8_t max_leqi = 0;
+            int8_t rec_cnt = 1;
+            for(int i = 1; i < LEAF_CARD; i++) {
+                if(cur_leaf->keys[i] != INT64_MAX) {
                     rec_cnt += 1;
                     if (cur_leaf->keys[i] <= key && cur_leaf->keys[i] > max_leqkey) {
                         max_leqkey = cur_leaf->keys[i];
@@ -243,37 +237,38 @@ class Fixtree {
             uint32_t insize = in.size();
 
             uint32_t incur = 0, innode_pos = 0, cur_lfcnt = 0;
-
-            _key_t k1 = in[0].key, k2 = leaf_nodes_[0].keys[0];
+            Record tmp[LEAF_CARD];
+            load_node(tmp, &leaf_nodes_[0]);
+            _key_t k1 = in[0].key, k2 = tmp[0].key;
             while(incur < insize && cur_lfcnt < leaf_cnt_) {
                 if(k1 == k2) { 
                     out.push_back(in[incur]);
 
                     incur += 1;
-
                     innode_pos += 1;
-                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
                         cur_lfcnt += 1;
+                        load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;
                     }
 
                     k1 = in[incur].key;
-                    k2 = leaf_nodes_[cur_lfcnt].keys[innode_pos];
+                    k2 = tmp[innode_pos].key;
                 } else if(k1 > k2) {
-                    out.push_back({leaf_nodes_[cur_lfcnt].keys[innode_pos], (char *)leaf_nodes_[cur_lfcnt].vals[innode_pos]});
+                    out.push_back(tmp[innode_pos]);
 
                     innode_pos += 1;
-                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
                         cur_lfcnt += 1;
+                        load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;
                     }
 
-                    k2 = leaf_nodes_[cur_lfcnt].keys[innode_pos];
+                    k2 = tmp[innode_pos].key;;
                 } else {
                     out.push_back(in[incur]);
                     
                     incur += 1;
-
                     k1 = in[incur].key;
                 }
             }
@@ -285,11 +280,12 @@ class Fixtree {
 
             if(cur_lfcnt < leaf_cnt_) {
                 while(cur_lfcnt < leaf_cnt_) {
-                    out.push_back({leaf_nodes_[cur_lfcnt].keys[innode_pos], (char *)leaf_nodes_[cur_lfcnt].vals[innode_pos]});
+                    out.push_back(tmp[innode_pos]);
 
                     innode_pos += 1;
-                    if(innode_pos == INNER_CARD || leaf_nodes_[cur_lfcnt].keys[innode_pos] == 0) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
                         cur_lfcnt += 1;
+                        load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;
                     }
                 }
@@ -311,9 +307,9 @@ class Fixtree {
         char **leaf_search(int node_idx, _key_t key) const {
             LFNode * cur_leaf = leaf_nodes_ + node_idx;
 
-            _key_t max_leqkey = -1;
-            int8_t max_leqi = -1;
-            for(int i = 0; i < LEAF_CARD; i++) {
+            _key_t max_leqkey = cur_leaf->keys[0];
+            int8_t max_leqi = 0;
+            for(int i = 1; i < LEAF_CARD; i++) {
                 if (cur_leaf->keys[i] <= key && cur_leaf->keys[i] > max_leqkey) {
                     max_leqkey = cur_leaf->keys[i];
                     max_leqi = i;
@@ -352,6 +348,15 @@ class Fixtree {
                 printf("[%lu, %lu] ", leaf_nodes_[node_idx].keys[i], (long unsigned int)leaf_nodes_[node_idx].vals[i]);
             }
             printf(") \n");
+        }
+
+        static void load_node(Record * to, LFNode * from) {
+            for(int i = 0; i < LEAF_CARD; i++) {
+                to[i].key = from->keys[i];
+                to[i].val = from->vals[i];
+            }
+
+            std::sort(to, to + LEAF_CARD);
         }
 };
 

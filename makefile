@@ -1,5 +1,5 @@
 CPP :=g++
-FLUSH_FLAG :=-DCLFLUSH 
+FLUSH_FLAG :=-DCLWB
 CFLAGS :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -O3 $(FLUSH_FLAG)
 CFLAGS_DEBUG :=-Iinclude -Itree -mclflushopt -mclwb -fmax-errors=5 -g -DDEBUG $(FLUSH_FLAG)
 
@@ -10,7 +10,7 @@ all: main datagen preload test
 	@echo "finish make"
 
 main: main.cc $(TREES)
-	$(CPP) $(CFLAGS) -DBACKGROUND_REBUILD main.cc -o main $(LINK_LIB)
+	$(CPP) $(CFLAGS) main.cc -o main $(LINK_LIB)
 
 preload: preload.cc $(TREES)
 	$(CPP) $(CFLAGS) preload.cc -o preload $(LINK_LIB)

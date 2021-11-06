@@ -17,6 +17,9 @@
 #include "wotree256.h"
 #include "wotree512.h"
 
+#define BACKGROUND_REBUILD true
+#define REBUILD_RECOVER false
+
 // choose uptree type, providing interfaces: insert, remove, update, find, merge, free_uptree
 #define UPTREE_NS   fixtree
 // choose downtree type, providing interfaces: insert, find_lower, remove_lower
@@ -51,7 +54,8 @@ private:
 
 public:
     TLBtree(string path, bool recover=true, string id = "tlbtree") {
-        mutable_ = new vector<Record>(0xfff);
+        mutable_ = new vector<Record>();
+        mutable_->reserve(0xfff);
         bool is_rebuilding_ = false;
         
         if(recover == false) {
@@ -62,14 +66,14 @@ public:
             entrance_->restore = NULL;
             entrance_->restore_size = 0;
             entrance_->is_clean = false;
-            entrance_->use_rebuild_recover = false;
+            entrance_->use_rebuild_recover = true;
             clwb(entrance_, sizeof(tlbtree_entrance_t));
             
             //allocate a entrance_ to the fixtree
-            std::vector<Record> init = {Record(0, (char *)galc->relative(new Node()))}; 
+            std::vector<Record> init = {Record(INT64_MIN, (char *)galc->relative(new Node()))}; 
             uptree_ = new UPTREE_NS::uptree_t(init);
             persist_assign(&(entrance_->upent), galc->relative(UPTREE_NS::get_entrance(uptree_)));
-            persist_assign(&(entrance_->use_rebuild_recover), false); // use fast rebuilding next time
+            persist_assign(&(entrance_->use_rebuild_recover), REBUILD_RECOVER); // use fast rebuilding next time
         } else {
             galc = new PMAllocator(path.c_str(), true, id.c_str());
 
@@ -149,6 +153,7 @@ public: // public interface
                 #endif
             } else {
                 #ifdef BACKGROUND_REBUILD
+                    //printf("Fast rebuilding in background\n");
                     std::thread rebuild_thread(&SelfType::rebuild_fast, this);
                     rebuild_thread.detach();
                 #else
@@ -163,9 +168,7 @@ public: // public interface
             
             // save these records into mutable_
             if(is_rebuilding_ == true || succ == false) {
-                //mutable_mtx_.lock();
                 mutable_->push_back({insert_res.rec.key, (char *)galc->relative(insert_res.rec.val)});
-                //mutable_mtx_.unlock();
             }
         }
     }
@@ -231,7 +234,8 @@ public: // public interface
 private:
     void rebuild_fast() { // fast rebuilding function
         // switch the restore to be immutable
-        vector<Record> * new_mutable = new vector<Record>(0xfff);
+        vector<Record> * new_mutable = new vector<Record>;
+        new_mutable->reserve(0xffff);
         vector<Record> * immutable = mutable_; // make the restore vector be immutable
         //mutable_mtx_.lock();
         mutable_ = new_mutable; // before this line, the mutable_ is still the old one
@@ -242,7 +246,7 @@ private:
         std::sort(immutable->begin(), immutable->end());
         // get the snapshot of all sub-index trees by combining the top layer with immutable
         std::vector<Record> subroots;
-        subroots.reserve(0x2fffff);
+        subroots.reserve(0x2ffff);
         uptree_->merge(*immutable, subroots);
 
         /* rebuild the top layer with immutable */  
@@ -302,7 +306,7 @@ private:
         is_rebuilding_ = false;
         rebuild_mtx_.unlock();
 
-        persist_assign(&(entrance_->use_rebuild_recover), false); // use fast rebuilding next time
+        persist_assign(&(entrance_->use_rebuild_recover), REBUILD_RECOVER); // use fast rebuilding next time
     }
 };
 

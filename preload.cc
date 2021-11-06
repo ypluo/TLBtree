@@ -27,7 +27,7 @@ void preload(BTreeType &tree, uint64_t load_size, ifstream & fin) {
         fin.read((char *)keys, sizeof(mykey_t) * MILLION);
         for(int i = 0; i < LOADSCALE * KILO; i++) {
             mykey_t key = keys[i];
-            //cout << key << endl;
+            cout << key << endl;
             tree.insert((mykey_t)key, key);
         }
         //tree.printAll();
@@ -58,7 +58,7 @@ int main(int argc, char ** argv) {
     keys = new mykey_t[sizeof(_key_t) * MILLION];
     
     cout << "tlbtree" << endl;
-    tlbtree::TLBtree<2, 1> tree("/mnt/pmem/tlbtree.pool", false);
+    tlbtree::TLBtree<2, 2> tree("/mnt/pmem/tlbtree.pool", false);
     preload(tree, LOADSCALE, fin);
 
     delete keys;
