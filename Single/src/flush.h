@@ -10,8 +10,6 @@
 
 #include "common.h"
 
-extern uint32_t flush_cnt;
-
 static inline void mfence() {
     asm volatile("sfence" ::: "memory");
 }
@@ -24,7 +22,6 @@ static inline void flush(void * ptr) {
 #else
     _mm_clflush(ptr);
 #endif
-    // flush_cnt++;
 }
 
 inline void clwb(void *data, int len) {

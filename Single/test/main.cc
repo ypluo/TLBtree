@@ -17,30 +17,28 @@ using std::endl;
 using std::ifstream;
 using std::string;
 
-PMAllocator * galc;
-uint32_t flush_cnt;
-
 template<typename BTreeType>
-double run_test(string path, ifstream & fin) {
-    int small_noise = getRandom() % 99; // each time we run, we will insert different keys
+double run_test(ifstream & fin) {
+    int small_noise = getRandom() & 0x3ff; // each time we run, we will insert different keys
     
     auto start = seconds();
 
-    BTreeType tree(path, true);
+    BTreeType tree(true);
     int op_id, notfound = 0;
     _key_t key;
     _value_t val;
     for(int i = 0; fin >> op_id >> key; i++) {
         switch (op_id) {
             case OperationType::INSERT:
-                //cout << key + seed << endl;
-                tree.insert(key + small_noise, key + small_noise);
+                tree.insert(key + small_noise, _value_t(key + small_noise));
                 break;
             case OperationType::READ:
-                if(!tree.find(key, val)) notfound++; // optimizer killer
+                val = tree.lookup(key);
+                if(val == nullptr) 
+                    notfound++; // optimizer killer
                 break;
             case OperationType::UPDATE:
-                tree.update(key, key * 2);
+                tree.update(key, _value_t(key * 2));
                 break;
             case OperationType::DELETE:
                 tree.remove(key);
@@ -69,7 +67,7 @@ int main(int argc, char ** argv) {
 
     ifstream fin(opt_fname.c_str());
     double time = 0;
-    time = run_test<tlbtree::TLBtree<2, 3>>("/mnt/pmem/tlbtree.pool", fin);
+    time = run_test<TLBtree>(fin);
     
     cout << time << endl;
     fin.close();

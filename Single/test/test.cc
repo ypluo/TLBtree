@@ -19,8 +19,6 @@ using std::ifstream;
 using std::string;
 
 _key_t * keys;
-PMAllocator * galc;
-uint32_t flush_cnt;
 uint32_t seed;
 
 template <typename BTreeType>
@@ -77,35 +75,35 @@ double update_throughput(BTreeType &tree, uint32_t req_cnt) {
 }
 
 template <typename BtreeType>
-void run_test(string path, int opt_loadid, int opt_scale){
+void run_test(int opt_loadid, int opt_scale){
     switch(opt_loadid) {
     case 1: { // test insert
-            BtreeType tree(path, true);
+            BtreeType tree(true);
             double dur1 = put_throughput(tree, opt_scale);
             cout << dur1 << endl;
             break;
         }
     case 2: { // test read
-            BtreeType tree(path, true);
+            BtreeType tree(true);
             double dur1 = get_throughput(tree, opt_scale);
             cout << dur1 << endl;
             break;
         }
     case 3: { // test update
-            BtreeType tree(path, true);
+            BtreeType tree(true);
             double dur1 = update_throughput(tree, opt_scale);
             cout << dur1 << endl;
             break;
         }
     case 4: { // test delete
-            BtreeType tree(path, true);
+            BtreeType tree(true);
             double dur1 = del_throughput(tree, opt_scale);
             cout << dur1 << endl;
             break;
         }
     default : { // basic test
             seed = 0; // the tree is empty
-            BtreeType tree(path, false);
+            BtreeType tree(false);
             put_throughput(tree, opt_scale);
             get_throughput(tree, opt_scale);
             //del_throughput(tree, opt_scale);
@@ -166,7 +164,6 @@ int main(int argc, char ** argv) {
     seed = getRandom(); 
     std::default_random_engine rd(seed);
     std::uniform_int_distribution<uint64_t> dist(0, LOADSCALE * MILLION - opt_scale);
-    flush_cnt = 0;    
     #ifdef DEBUG
         // seek to the start of the file
         fin.seekg(0, std::ios_base::beg);
@@ -178,7 +175,7 @@ int main(int argc, char ** argv) {
     fin.read((char *)keys, sizeof(_key_t) * opt_scale);
 
     cout << "tlbtree" << endl;
-    run_test<tlbtree::TLBtree<2, 1>>("/mnt/pmem/tlbtree.pool", opt_loadid, opt_scale);
+    run_test<TLBtree>("/mnt/pmem/tlbtree.pool", opt_loadid, opt_scale);
 
     fin.close();
     delete keys;

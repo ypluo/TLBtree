@@ -30,7 +30,7 @@ class PMAllocator {
 private:
     static const int PEICE_CNT = 64;
     static const size_t ALIGN_SIZE = 256;
-    static const int64_t DEFAULT_POOL_SIZE = POOLSIZE * (1024UL * 1024 * 1024); // set the default pool size to be 10GB 
+    static const int64_t DEFAULT_POOL_SIZE = 10 * (1024UL * 1024 * 1024); // set the default pool size to be 10GB 
     
     struct MetaType {
         char * buffer[PEICE_CNT];
@@ -157,7 +157,7 @@ public:
 
             cur_blk_ = piece_size_ * (piece_id + 1) + blk_demand;
             meta_->cur_blk = cur_blk_;
-            //clwb(&(meta_->cur_blk), 8);
+            clwb(&(meta_->cur_blk), 8);
 
             return mem;
         } 
@@ -167,7 +167,7 @@ public:
 
             cur_blk_ = cur_blk_ + blk_demand;
             meta_->cur_blk = cur_blk_;
-            //clwb(&(meta_->cur_blk), 8);
+            clwb(&(meta_->cur_blk), 8);
 
             return mem;
         }

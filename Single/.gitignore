@@ -1,7 +1,2 @@
-*.txt
+build
 .vscode
-main
-datagen
-test
-preload
-*.dat

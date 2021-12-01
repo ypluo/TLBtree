@@ -360,11 +360,11 @@ class Fixtree {
         }
 };
 
-entrance_t * get_entrance(Fixtree * tree) {
+inline entrance_t * get_entrance(Fixtree * tree) {
     return tree->entrance_;
 }
 
-void free(Fixtree * tree) {
+inline void free(Fixtree * tree) {
     entrance_t * upent = get_entrance(tree);
     delete tree;
 

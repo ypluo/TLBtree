@@ -3,8 +3,8 @@
     USE AT YOUR OWN RISK!
 */
 
-#ifndef __TLBTREE_H__
-#define __TLBTREE_H__
+#ifndef __TLBTREEIMPL_H__
+#define __TLBTREEIMPL_H__
 
 #include <string>
 #include <thread>
@@ -15,7 +15,6 @@
 #include "fixtree.h"
 #include "spinlock.h"
 #include "wotree256.h"
-#include "wotree512.h"
 
 #define BACKGROUND_REBUILD true
 #define REBUILD_RECOVER false
@@ -31,9 +30,9 @@ using std::vector;
 using Node = DOWNTREE_NS::Node;
 
 template<int DOWNLEVEL, int REBUILD_THRESHOLD=2>
-class TLBtree {
+class TLBtreeImpl {
 private:
-    typedef TLBtree<DOWNLEVEL, REBUILD_THRESHOLD> SelfType;
+    typedef TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD> SelfType;
     
     // the entrance of TLBtree that stores its persistent tree metadata
     struct tlbtree_entrance_t {
@@ -49,17 +48,16 @@ private:
     tlbtree_entrance_t * entrance_;
     vector<Record> * mutable_;
     Spinlock rebuild_mtx_;
-    //Spinlock mutable_mtx_;
     bool is_rebuilding_;
 
 public:
-    TLBtree(string path, bool recover=true, string id = "tlbtree") {
+    TLBtreeImpl(string path, bool recover, uint64_t pool_size) {
         mutable_ = new vector<Record>();
         mutable_->reserve(0xfff);
         bool is_rebuilding_ = false;
         
         if(recover == false) {
-            galc = new PMAllocator(path.c_str(), false, id.c_str());
+            galc = new PMAllocator(path.c_str(), false, "tlbtree", pool_size);
             // initialize entrance_
             entrance_ = (tlbtree_entrance_t *) galc->get_root(sizeof(tlbtree_entrance_t));
             entrance_->upent = NULL;
@@ -75,7 +73,7 @@ public:
             persist_assign(&(entrance_->upent), galc->relative(UPTREE_NS::get_entrance(uptree_)));
             persist_assign(&(entrance_->use_rebuild_recover), REBUILD_RECOVER); // use fast rebuilding next time
         } else {
-            galc = new PMAllocator(path.c_str(), true, id.c_str());
+            galc = new PMAllocator(path.c_str(), true, "tlbtree", pool_size);
 
             entrance_ = (tlbtree_entrance_t *) galc->get_root(sizeof(tlbtree_entrance_t));
             if(entrance_ == NULL || entrance_->upent == NULL) { // empty tree
@@ -103,7 +101,7 @@ public:
         persist_assign(&(entrance_->is_clean), false); // set the TLBtree state to be dirty
     }
 
-    ~TLBtree() {
+    ~TLBtreeImpl() {
         if(entrance_->use_rebuild_recover == false) { // fast rebuilding next time
             // save all subroots in mutable_ into PM
             Record * rec = (Record *) galc->malloc(std::max((size_t)4096, mutable_->size() * sizeof(Record)));
@@ -153,7 +151,6 @@ public: // public interface
                 #endif
             } else {
                 #ifdef BACKGROUND_REBUILD
-                    //printf("Fast rebuilding in background\n");
                     std::thread rebuild_thread(&SelfType::rebuild_fast, this);
                     rebuild_thread.detach();
                 #else
@@ -237,9 +234,7 @@ private:
         vector<Record> * new_mutable = new vector<Record>;
         new_mutable->reserve(0xffff);
         vector<Record> * immutable = mutable_; // make the restore vector be immutable
-        //mutable_mtx_.lock();
         mutable_ = new_mutable; // before this line, the mutable_ is still the old one
-        //mutable_mtx_.unlock();
 
         is_rebuilding_ = true;
 
@@ -271,7 +266,7 @@ private:
         delete immutable;
     }
 
-    void rebuild_recover() { // slowee rebuilding function 
+    void rebuild_recover() { // slow rebuilding function 
         is_rebuilding_ = true;
         // get the snapshot of all sub-index trees by traverse in the down layer
         std::vector<Record> subroots;
@@ -312,4 +307,4 @@ private:
 
 } // tlbtree namespace
 
-#endif //__TLBTREE_H__
+#endif //__TLBTREEIMPL_H__

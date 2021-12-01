@@ -11,7 +11,7 @@
 #include <algorithm>
 
 #include "common.h"
-#include "zipfian_int_distribution.h"
+#include "zipfian.h"
 
 using std::cout;
 using std::endl;
