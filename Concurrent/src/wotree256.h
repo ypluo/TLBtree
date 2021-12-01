@@ -158,6 +158,13 @@ public:
         // there is one exclusive writer 
         state_.lock();
 
+        Record &sibling = siblings_[state_.unpack.sibling_version]; // the sibling is updated atomically, we are safe here
+        if(k >= sibling.key) { // if the node has splitted and k to find is in next node 
+            Node * sib_node = (Node *)galc->absolute(sibling.val);
+            state_.unlock();
+            return sib_node->store(k, v, split_k, split_node);
+        }
+
         if(state_.unpack.count == CARDINALITY) { // should split the node
             uint64_t m = state_.unpack.count / 2;
             split_k = recs_[state_.read(m)].key;
@@ -208,10 +215,9 @@ public:
                 insertone(k, (char *)v);
                 state_.unlock();
             } else {
-                state_.unlock();
-                
                 split_node->state_.lock();
-                split_node->insertone(k, (char *)v);
+                state_.unlock();
+                    split_node->insertone(k, (char *)v);
                 split_node->state_.unlock();
             }
 
@@ -230,7 +236,6 @@ public:
         uint64_t old_version = state_.unpack.node_version;
 
         Record &sibling = siblings_[state_.unpack.sibling_version]; // the sibling is updated atomically, we are safe here
-
         if(k >= sibling.key) { // if the node has splitted and k to find is in next node 
             Node * sib_node = (Node *)galc->absolute(sibling.val);
             return sib_node->get_child(k);
