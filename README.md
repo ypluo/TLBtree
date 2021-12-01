@@ -21,14 +21,20 @@ We test our project on ubuntu LTS 2020.
 
 
 #### Usage
-Follow these steps to play with TLBtree.
-1. Compile the program use `make` command. It will generate four excutable files: *datagen, test, preload, and main*. Run each excuatable file with -h option for help info.
-2. Use *datagen* to generate different types of dataset and workload.
-3. Use *preload* to pre-build a persistent index, upon which we run the later CRUD operations.
+1. Configure your PMEM file address and file size threshold in *include/tlbtree.h*
+2. Compile the program with following commands (the same in Single or Concurrent)
+    ```sh
+    mkdir build
+    cd build; cmake ..
+    make
+    ```
+3. Play with TLBtree using provided test modules:
+    
+    (a). generate data with `datagen` (type `datagen -h` if needed)
 
-4. Use *test* to do basic function test of TLBtree or use *main* to evaluate the performance of TLBtree. 
+    (b). populate the TLBtree with some inital key value pairs
 
-#### Dataset Scale
-The default configuration hard-codes the dataset scale (LOADSCALE) and index file size (POOLSIZE, proportional to LOADSCALE) into file `include/common.h`. Change it for different scale.
+    (c). doing CUID operations with `main`
 
-We presume that your machine is not capable of issuing clwb and clflushopt instrutions. If not, change the FLUSH_FLAG variable in makefile into -DCLWB and -DCLFLUSHOPT, respectively.
+#### Limitations
+Currently TLBtree supports only 8-byte integer key and payload
