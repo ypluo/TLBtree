@@ -108,14 +108,16 @@ TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::TLBtreeImpl(string path, bool recover
             persist_assign(&(entrance_->use_rebuild_recover), true); // use recover rebuilding next time
         } else { // normal shutdown
             // recover all subroots from PM back to mutable_, within miliseconds
-            Record * rec = galc->absolute(entrance_->restore);
-            for(int i = 0; i < entrance_->restore_size; i++) {
-                mutable_->push_back(rec[i]);
+            if(entrance_->restore != NULL) {
+                Record * rec = galc->absolute(entrance_->restore);
+                for(int i = 0; i < entrance_->restore_size; i++) {
+                    mutable_->push_back(rec[i]);
+                }
+                entrance_->restore = NULL;
+                entrance_->restore_size = 0;
+                clwb(&entrance_->restore, 16);
+                galc->free(rec);
             }
-            entrance_->restore = NULL;
-            entrance_->restore_size = 0;
-            clwb(&entrance_->restore, 16);
-            galc->free(rec);
         }
 
         uptree_ = new UPTREE_NS::uptree_t (galc->absolute(entrance_->upent));

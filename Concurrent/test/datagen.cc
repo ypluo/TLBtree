@@ -105,8 +105,8 @@ void gen_dataset(int64_t *arr, uint64_t scale, bool random) {
 
 void gen_workload(int64_t *arr, uint64_t scale, QueryType * querys, WorkloadType w) {
     std::mt19937 gen(getRandom());
-    std::uniform_int_distribution<int64_t> idx1_dist(0, scale);
-    zipfian_int_distribution<int64_t> idx2_dist(0, scale, w.skewness);
+    std::uniform_int_distribution<int64_t> idx1_dist(0, scale - 1);
+    zipfian_int_distribution<int64_t> idx2_dist(0, scale - 1, w.skewness);
     OperationGenerator op_gen(w);
 
     for(int i = 0; i < w.operations; i++) {
