@@ -19,7 +19,7 @@
 namespace fixtree {
     const int INNER_CARD = 32; // node size: 256B, the fanout of inner node is 32
     const int LEAF_CARD = 16;  // node size: 256B, the fanout of leaf node is 16
-    const int LEAF_REBUILD_CARD = 4;
+    const int LEAF_REBUILD_CARD = 12;
     const int MAX_HEIGHT = 10;
 
     // the entrance of fixtree that stores its persistent tree metadata
@@ -59,6 +59,7 @@ class Fixtree {
             inner_nodes_ = (INNode *)galc->absolute(ent->inner_buff);
             leaf_nodes_ = (LFNode *)galc->absolute(ent->leaf_buff);
             height_ = ent->height;
+            leaf_cnt_ = ent->leaf_cnt;
             entrance_ = ent;
 
             uint32_t tmp = 0;
