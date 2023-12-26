@@ -68,7 +68,7 @@ public:
             clwb(entrance_, sizeof(tlbtree_entrance_t));
             
             //allocate a entrance_ to the fixtree
-            std::vector<Record> init = {Record(INT64_MIN, (char *)galc->relative(new Node()))}; 
+            std::vector<Record> init = {Record(MIN_KEY, (char *)galc->relative(new Node()))}; 
             uptree_ = new UPTREE_NS::uptree_t(init);
             persist_assign(&(entrance_->upent), galc->relative(UPTREE_NS::get_entrance(uptree_)));
             persist_assign(&(entrance_->use_rebuild_recover), REBUILD_RECOVER); // use fast rebuilding next time
@@ -126,7 +126,7 @@ public:
     }
 
 public: // public interface
-    void insert(const _key_t & k, _value_t v) { 
+    void insert(const _key_t & k, uint64_t v) { 
         Node ** root_ptr = (Node **)uptree_->find_lower(k);
         Node * downroot = (Node *)galc->absolute(*root_ptr);
  
@@ -163,7 +163,7 @@ public: // public interface
 
         if(insert_res.flag == true) { // a sub-index tree is splitted
             // try save the sub-indices root into the top layer
-            bool succ = uptree_->insert(insert_res.rec.key, (_value_t)galc->relative(insert_res.rec.val));
+            bool succ = uptree_->insert(insert_res.rec.key, (uint64_t)galc->relative(insert_res.rec.val));
             
             // save these records into mutable_
             if(is_rebuilding_ == true || succ == false) {
@@ -172,7 +172,7 @@ public: // public interface
         }
     }
 
-    bool find(const _key_t & k, _value_t & v) {
+    bool find(const _key_t & k, uint64_t & v) {
         Node ** root_ptr = (Node **)uptree_->find_lower(k);
         Node * downroot = (Node *)galc->absolute(*root_ptr);
 
@@ -210,7 +210,7 @@ public: // public interface
         return true;
     }
 
-    bool update(const _key_t & k, const _value_t & v) {
+    bool update(const _key_t & k, const uint64_t & v) {
         Node ** root_ptr = (Node **)uptree_->find_lower(k);
         Node * downroot = (Node *)galc->absolute(*root_ptr);
 

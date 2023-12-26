@@ -5,6 +5,8 @@
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
+#include <cstdint>
+#include <limits>
 #include <sys/stat.h>
 
 #define LOADSCALE 8
@@ -14,13 +16,20 @@
 #define MILLION (KILO * KILO)
 #define CACHE_LINE_SIZE 64
 
-using _key_t = int64_t;
-using _value_t = void *;
+#ifndef KEYTYPE
+    using _key_t = int64_t;
+#else
+    using _key_t = KEYTYPE;
+#endif
+
+const _key_t MAX_KEY = std::numeric_limits<_key_t>::max();
+const _key_t MIN_KEY = typeid(_key_t) == typeid(double) || typeid(_key_t) == typeid(float) 
+                            ? -1 * MAX_KEY : std::numeric_limits<_key_t>::min();
 
 struct Record {
     _key_t key;
     char * val; 
-    Record(_key_t k=INT64_MAX, char * v=NULL) : key(k), val(v) {}
+    Record(_key_t k=MAX_KEY, char * v=NULL) : key(k), val(v) {}
     bool operator < (const Record & other) {
         return key < other.key;
     }

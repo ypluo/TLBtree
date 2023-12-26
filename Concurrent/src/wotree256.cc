@@ -2,7 +2,7 @@
 
 namespace wotree256 {
 
-bool insert_recursive(Node * n, _key_t k, _value_t v, _key_t &split_k, Node * &split_node, int8_t &level) {
+bool insert_recursive(Node * n, _key_t k, uint64_t v, _key_t &split_k, Node * &split_node, int8_t &level) {
     if(n->leftmost_ptr_ == NULL) {
         return n->store(k, v, split_k, split_node);
     } else {
@@ -14,7 +14,7 @@ bool insert_recursive(Node * n, _key_t k, _value_t v, _key_t &split_k, Node * &s
         bool splitIf = insert_recursive(child, k, v, split_k_child, split_node_child, level);
 
         if(splitIf) { 
-            return n->store(split_k_child, (_value_t)galc->relative(split_node_child), split_k, split_node);
+            return n->store(split_k_child, (uint64_t)galc->relative(split_node_child), split_k, split_node);
         } 
         return false;
     }
@@ -54,14 +54,14 @@ bool remove_recursive(Node * n, _key_t k) {
     }
 }
 
-bool find(Node ** rootPtr, _key_t key, _value_t &val) {
+bool find(Node ** rootPtr, _key_t key, uint64_t &val) {
     Node * cur = galc->absolute(*rootPtr);
     while(cur->leftmost_ptr_ != NULL) { // no prefetch here
         char * child_ptr = cur->get_child(key);
         cur = (Node *)galc->absolute(child_ptr);
     }
 
-    val = (_value_t) cur->get_child(key);
+    val = (uint64_t) cur->get_child(key);
 
     if((char *)val == NULL)
         return false;
@@ -69,7 +69,7 @@ bool find(Node ** rootPtr, _key_t key, _value_t &val) {
         return true;
 }
 
-res_t insert(Node ** rootPtr, _key_t key, _value_t val, int threshold) {
+res_t insert(Node ** rootPtr, _key_t key, uint64_t val, int threshold) {
     Node *root_= galc->absolute(*rootPtr);
     
     int8_t level = 1;
@@ -99,14 +99,14 @@ res_t insert(Node ** rootPtr, _key_t key, _value_t val, int threshold) {
     }
 }
 
-bool update(Node ** rootPtr, _key_t key, _value_t val) {
+bool update(Node ** rootPtr, _key_t key, uint64_t val) {
     Node * cur = galc->absolute(*rootPtr);
     while(cur->leftmost_ptr_ != NULL) { // no prefetch here
         char * child_ptr = cur->get_child(key);
         cur = (Node *)galc->absolute(child_ptr);
     }
 
-    val = (_value_t) cur->update(key, val);
+    val = (uint64_t) cur->update(key, val);
     return true;
 }
 

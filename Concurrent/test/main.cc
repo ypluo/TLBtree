@@ -17,7 +17,7 @@ using std::string;
 template<typename BtreeType>
 double run_test(std::vector<QueryType> querys, int thread_cnt) {
     // construct a Btree
-    BtreeType tree(true);
+    BtreeType tree("/mnt/pmem/tlbtree.pool");
     
     std::atomic_int cur_pos(0);
     int small_noise = getRandom() & 0xff; // each time we run, we will insert different keys
@@ -35,18 +35,16 @@ double run_test(std::vector<QueryType> querys, int thread_cnt) {
             int obtain_pos = cur_pos.fetch_add(1, std::memory_order_relaxed);
             OperationType op = querys[obtain_pos].op;
             _key_t key = querys[obtain_pos].key;
-            _value_t val = (_value_t)key;
+            uint64_t val = (uint64_t)key;
 
             switch (op) {
                 case OperationType::READ: {
                     auto val = tree.lookup(key);
-                    // if(val == nullptr)
-                    //     printf("%lu\n", key);
-                    assert(val != nullptr);
+                    assert(val != 0);
                     break;
                 }
                 case OperationType::INSERT: {
-                    tree.insert(key + small_noise, _value_t((uint64_t)val + small_noise));
+                    tree.insert(key + small_noise, uint64_t((uint64_t)val + small_noise));
                     break;
                 }
                 case OperationType::UPDATE: {

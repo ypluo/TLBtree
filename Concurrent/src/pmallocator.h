@@ -30,7 +30,6 @@ class PMAllocator {
 private:
     static const int PEICE_CNT = 64;
     static const size_t ALIGN_SIZE = 256;
-    static const uint64_t DEFAULT_POOL_SIZE = 10 * (1024UL * 1024 * 1024); // set the default pool size to be 10GB 
     
     struct MetaType {
         char * buffer[PEICE_CNT];
@@ -58,7 +57,7 @@ public:
      *  @param layout_name  ID of a group of allocations (in characters), each ID corresponding to a root entry
      *  @param pool_size    pool size of the pool file, vaild if the file doesn't exist
      */
-    PMAllocator(const char *file_name, bool recover, const char *layout_name, uint64_t pool_size = DEFAULT_POOL_SIZE) {
+    PMAllocator(const char *file_name, bool recover, const char *layout_name, uint64_t pool_size) {
         PMEMobjpool *tmp_pool = nullptr;
         pool_size = pool_size + ((pool_size & ((1 << 23) - 1)) > 0 ? (1 << 23) : 0); // align to 8MB
 	    if(recover == false) {

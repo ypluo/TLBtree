@@ -57,11 +57,11 @@ public:
 
     ~TLBtreeImpl();
 
-    void insert(const _key_t & k, _value_t v);
+    void insert(const _key_t & k, uint64_t v);
 
-    bool find(const _key_t & k, _value_t & v) const ;
+    bool find(const _key_t & k, uint64_t & v) const ;
 
-    bool update(const _key_t & k, const _value_t & v);
+    bool update(const _key_t & k, const uint64_t & v);
 
     bool remove(const _key_t & k);
 
@@ -91,12 +91,12 @@ TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::TLBtreeImpl(string path, bool recover
         clwb(entrance_, sizeof(tlbtree_entrance_t));
         
         //allocate a entrance_ to the fixtree
-        std::vector<Record> init = {Record(INT64_MIN, (char *)galc->relative(new Node()))}; 
+        std::vector<Record> init = {Record(MIN_KEY, (char *)galc->relative(new Node()))}; 
         uptree_ = new UPTREE_NS::uptree_t(init);
         persist_assign(&(entrance_->upent), galc->relative(UPTREE_NS::get_entrance(uptree_)));
         persist_assign(&(entrance_->use_rebuild_recover), false); // use fast rebuilding next time
     } else {
-        galc = new PMAllocator(path.c_str(), true, "tlbtree");
+        galc = new PMAllocator(path.c_str(), true, "tlbtree", pool_size);
 
         entrance_ = (tlbtree_entrance_t *) galc->get_root(sizeof(tlbtree_entrance_t));
         if(entrance_ == NULL || entrance_->upent == NULL) { // empty tree
@@ -151,7 +151,7 @@ TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::~TLBtreeImpl() {
 }
 
 template<int DOWNLEVEL, int REBUILD_THRESHOLD>
-void TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::insert(const _key_t & k, _value_t v) { 
+void TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::insert(const _key_t & k, uint64_t v) { 
     Node ** root_ptr = (Node **)uptree_->find_lower(k);
     Node * downroot = (Node *)galc->absolute(*root_ptr);
 
@@ -188,7 +188,7 @@ void TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::insert(const _key_t & k, _value_
 
     if(insert_res.flag == true) { // a sub-index tree is splitted
         // try save the sub-indices root into the top layer
-        bool succ = uptree_->insert(insert_res.rec.key, (_value_t)galc->relative(insert_res.rec.val));
+        bool succ = uptree_->insert(insert_res.rec.key, (uint64_t)galc->relative(insert_res.rec.val));
         
         // save these records into mutable_
         if(is_rebuilding_ == true || succ == false) {
@@ -200,7 +200,7 @@ void TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::insert(const _key_t & k, _value_
 }
 
 template<int DOWNLEVEL, int REBUILD_THRESHOLD>
-bool TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::find(const _key_t & k, _value_t & v) const {
+bool TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::find(const _key_t & k, uint64_t & v) const {
     Node ** root_ptr = (Node **)uptree_->find_lower(k);
     Node * downroot = (Node *)galc->absolute(*root_ptr);
 
@@ -240,7 +240,7 @@ bool TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::remove(const _key_t & k) {
 }
 
 template<int DOWNLEVEL, int REBUILD_THRESHOLD>
-bool TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::update(const _key_t & k, const _value_t & v) {
+bool TLBtreeImpl<DOWNLEVEL, REBUILD_THRESHOLD>::update(const _key_t & k, const uint64_t & v) {
     Node ** root_ptr = (Node **)uptree_->find_lower(k);
     Node * downroot = (Node *)galc->absolute(*root_ptr);
 

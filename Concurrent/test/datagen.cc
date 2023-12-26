@@ -78,8 +78,8 @@ public :
 void gen_dataset(int64_t *arr, uint64_t scale, bool random) {
     std::mt19937 gen(10007);
     if(random) {
-        uint64_t step = INT64_MAX / scale;
-        std::uniform_int_distribution<int64_t> dist(0, INT64_MAX);
+        uint64_t step = MAX_KEY / scale;
+        std::uniform_int_distribution<int64_t> dist(0, MAX_KEY);
         for(int64_t i = 0; i < scale; i++) {
             #ifdef DEBUG
                 arr[i] = i + 1;
@@ -89,11 +89,11 @@ void gen_dataset(int64_t *arr, uint64_t scale, bool random) {
         }
         std::shuffle(arr, arr + scale - 1, gen);
     } else {
-        std::normal_distribution<double> dist(INT64_MAX / 2, INT64_MAX / 8);
+        std::normal_distribution<double> dist(MAX_KEY / 2, MAX_KEY / 8);
         int64_t i = 0;
         while (i < scale) {
             double val = (uint64_t)dist(gen);
-            if(val < 0 || val > (double) INT64_MAX) {
+            if(val < 0 || val > (double) MAX_KEY) {
                 continue;
             } else {
                 arr[i++] = (int64_t)std::round(val);

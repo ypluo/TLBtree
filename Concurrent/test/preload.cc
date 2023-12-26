@@ -22,7 +22,7 @@ void preload(BTreeType &tree, int64_t load_size, ifstream & fin, int thread_cnt)
         #pragma omp for schedule(static)
         for(int64_t i = 0; i < load_size; i++) {
             _key_t key = keys[i];
-            tree.insert((_key_t)key, (_value_t)key);
+            tree.insert((_key_t)key, (uint64_t)key);
         }
     }
     return ;
@@ -47,7 +47,7 @@ int main(int argc, char ** argv) {
     fin.read((char *)keys, sizeof(_key_t) * LOADSCALE * MILLION);
     
     cout << "tlbtree" << endl;
-    TLBtree tree(false);
+    TLBtree tree("/mnt/pmem/tlbtree.pool");
     preload(tree, LOADSCALE * MILLION, fin, num_threads);
 
     delete keys;

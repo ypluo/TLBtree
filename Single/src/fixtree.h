@@ -19,7 +19,7 @@
 namespace fixtree {
     const int INNER_CARD = 32; // node size: 256B, the fanout of inner node is 32
     const int LEAF_CARD = 16;  // node size: 256B, the fanout of leaf node is 16
-    const int LEAF_REBUILD_CARD = 12;
+    const int LEAF_REBUILD_CARD = 8;
     const int MAX_HEIGHT = 10;
 
     // the entrance of fixtree that stores its persistent tree metadata
@@ -85,11 +85,11 @@ class Fixtree {
             for(int i = 0; i < lfnode_cnt; i++) {
                 for(int j = 0; j < lfary; j++) {
                     auto idx = i * lfary + j;
-                    leaf_nodes_[i].keys[j] = idx < record_count ? records[idx].key : INT64_MAX; 
+                    leaf_nodes_[i].keys[j] = idx < record_count ? records[idx].key : MAX_KEY; 
                     leaf_nodes_[i].vals[j] = idx < record_count ? records[idx].val : 0;
                 }
                 for(int j = lfary; j < LEAF_CARD; j++) { // intialized key
-                    leaf_nodes_[i].keys[j] = INT64_MAX;
+                    leaf_nodes_[i].keys[j] = MAX_KEY;
                 }
                 clwb(leaf_nodes_ + i, sizeof(LFNode));
             }
@@ -102,7 +102,7 @@ class Fixtree {
             for(int i = 0; i < cur_level_cnt; i++)
                 inner_insert(cur_level_off + i / INNER_CARD, i % INNER_CARD, leaf_nodes_[i].keys[0]);
             if(cur_level_cnt % INNER_CARD)
-                inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, INT64_MAX);
+                inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, MAX_KEY);
             clwb(&inner_nodes_[cur_level_off], sizeof(INNode) * (cur_level_cnt / INNER_CARD + 1));
             
             cur_level_cnt = std::ceil((float)cur_level_cnt / INNER_CARD);
@@ -114,7 +114,7 @@ class Fixtree {
                 for(int i = 0; i < cur_level_cnt; i++)
                     inner_insert(cur_level_off + i / INNER_CARD, i % INNER_CARD, inner_nodes_[last_level_off + i].keys[0]);
                 if(cur_level_cnt % INNER_CARD)
-                    inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, INT64_MAX);
+                    inner_insert(cur_level_off + cur_level_cnt / INNER_CARD, cur_level_cnt % INNER_CARD, MAX_KEY);
                 clwb(&inner_nodes_[cur_level_off], sizeof(INNode) * (cur_level_cnt / INNER_CARD + 1));
 
                 cur_level_cnt = std::ceil((float)cur_level_cnt / INNER_CARD);
@@ -154,7 +154,7 @@ class Fixtree {
             return leaf_search(cur_idx, key);
         }
 
-        bool insert(_key_t key, _value_t val) {
+        bool insert(_key_t key, uint64_t val) {
             uint32_t cur_idx = level_offset_[0];
             for(int l = 0; l < height_; l++) {
                 #ifdef DEBUG
@@ -167,7 +167,7 @@ class Fixtree {
             LFNode * cur_leaf = leaf_nodes_ + cur_idx;
 
             for(int i = 0; i < LEAF_CARD; i++) {
-                if (cur_leaf->keys[i] == INT64_MAX) { // empty slot
+                if (cur_leaf->keys[i] == MAX_KEY) { // empty slot
                     leaf_insert(cur_idx, i, {key, (char *)val});
                     return true;
                 }
@@ -191,7 +191,7 @@ class Fixtree {
             int8_t max_leqi = 0;
             int8_t rec_cnt = 1;
             for(int i = 1; i < LEAF_CARD; i++) {
-                if(cur_leaf->keys[i] != INT64_MAX) {
+                if(cur_leaf->keys[i] != MAX_KEY) {
                     rec_cnt += 1;
                     if (cur_leaf->keys[i] <= key && cur_leaf->keys[i] > max_leqkey) {
                         max_leqkey = cur_leaf->keys[i];
@@ -208,7 +208,7 @@ class Fixtree {
             if(max_leqi == 0 && rec_cnt > 1) { // case 1
                 return false;
             } else { // case 2, 3
-                persist_assign(&(cur_leaf->keys[max_leqi]), INT64_MAX);
+                persist_assign(&(cur_leaf->keys[max_leqi]), MAX_KEY);
                 return true;
             }
         }
@@ -247,7 +247,7 @@ class Fixtree {
 
                     incur += 1;
                     innode_pos += 1;
-                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == MAX_KEY) {
                         cur_lfcnt += 1;
                         load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;
@@ -259,7 +259,7 @@ class Fixtree {
                     out.push_back(tmp[innode_pos]);
 
                     innode_pos += 1;
-                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == MAX_KEY) {
                         cur_lfcnt += 1;
                         load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;
@@ -284,7 +284,7 @@ class Fixtree {
                     out.push_back(tmp[innode_pos]);
 
                     innode_pos += 1;
-                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == INT64_MAX) {
+                    if(innode_pos == LEAF_CARD || tmp[innode_pos].key == MAX_KEY) {
                         cur_lfcnt += 1;
                         load_node(tmp, &leaf_nodes_[cur_lfcnt]);
                         innode_pos = 0;

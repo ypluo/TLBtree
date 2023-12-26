@@ -145,8 +145,8 @@ public:
 
 public:
     Node(bool isleaf = false): state_(0), leftmost_ptr_(NULL) {
-        siblings_[0] = {INT64_MAX, NULL};
-        siblings_[1] = {INT64_MAX, NULL};
+        siblings_[0] = {MAX_KEY, NULL};
+        siblings_[1] = {MAX_KEY, NULL};
     }
 
     void *operator new(size_t size) {
@@ -154,7 +154,7 @@ public:
         return ret;
     }
 
-    bool store(_key_t k, _value_t v, _key_t & split_k, Node * & split_node) {
+    bool store(_key_t k, uint64_t v, _key_t & split_k, Node * & split_node) {
         // there is one exclusive writer 
         state_.lock();
 
@@ -279,7 +279,7 @@ public:
         }
     }
 
-    bool update(_key_t k, _value_t v) {
+    bool update(_key_t k, uint64_t v) {
         uint64_t slotid = 0;
         for(int i = 0; i < state_.unpack.count; i++) {
             slotid = state_.read(i);
@@ -460,12 +460,12 @@ public:
     }
 };
 
-extern bool insert_recursive(Node * n, _key_t k, _value_t v, _key_t &split_k, 
+extern bool insert_recursive(Node * n, _key_t k, uint64_t v, _key_t &split_k, 
                                 Node * &split_node, int8_t &level);
 extern bool remove_recursive(Node * n, _key_t k);
-extern bool find(Node ** rootPtr, _key_t key, _value_t &val);
-extern res_t insert(Node ** rootPtr, _key_t key, _value_t val, int threshold);
-extern bool update(Node ** rootPtr, _key_t key, _value_t val);
+extern bool find(Node ** rootPtr, _key_t key, uint64_t &val);
+extern res_t insert(Node ** rootPtr, _key_t key, uint64_t val, int threshold);
+extern bool update(Node ** rootPtr, _key_t key, uint64_t val);
 extern bool remove(Node ** rootPtr, _key_t key);
 extern void printAll(Node ** rootPtr);
 

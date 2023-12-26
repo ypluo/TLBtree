@@ -23,22 +23,22 @@ double run_test(ifstream & fin) {
     
     auto start = seconds();
 
-    BTreeType tree(true);
+    BTreeType tree("/mnt/pmem/tlbtree.pool");
     int op_id, notfound = 0;
     _key_t key;
-    _value_t val;
+    uint64_t val;
     for(int i = 0; fin >> op_id >> key; i++) {
         switch (op_id) {
             case OperationType::INSERT:
-                tree.insert(key + small_noise, _value_t(key + small_noise));
+                tree.insert(key + small_noise, uint64_t(key + small_noise));
                 break;
             case OperationType::READ:
                 val = tree.lookup(key);
-                if(val == nullptr) 
+                if(val == 0) 
                     notfound++; // optimizer killer
                 break;
             case OperationType::UPDATE:
-                tree.update(key, _value_t(key * 2));
+                tree.update(key, uint64_t(key * 2));
                 break;
             case OperationType::DELETE:
                 tree.remove(key);
