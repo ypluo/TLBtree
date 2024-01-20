@@ -17,6 +17,8 @@
 
 namespace wotree256 {
 
+inline void barrier() { __asm__ __volatile__("": : :"memory");}
+
 using std::string;
 constexpr int CARDINALITY = 13;
 constexpr int UNDERFLOW_CARD = 4;
@@ -54,42 +56,40 @@ public:
         return CARDINALITY; // never be here
     }
     
-    void lock() {
+    void lock(bool change_version = true) {
         state_t new_state = pack;
         new_state.unpack.latch = 0;
-        uint64_t unlocked_pack = new_state.pack;
+        uint64_t old = new_state.pack;
         new_state.unpack.latch = 1;
-        uint64_t locked_pack = new_state.pack;
+        if(change_version) new_state.unpack.node_version++;
+        uint64_t desired = new_state.pack;
 
-        while(__sync_bool_compare_and_swap((uint64_t *)&(this->pack), unlocked_pack, locked_pack) == false) {
+        while(!__atomic_compare_exchange(&(this->pack), &old, &desired,
+                false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)){
             // the latch is hold by other thread or the state is changed
             while(1) { // if the latch is not released, wait it
                 _mm_pause(); // delay for 140 cycle
-                if(unpack.latch == 0) // check if the latch is released
-                    break;
-                
-                std::this_thread::yield(); // delay for 113ns
                 if(unpack.latch == 0) // check if the latch is released
                     break;
             }
 
             state_t new_state = pack;
             new_state.unpack.latch = 0;
-            unlocked_pack = new_state.pack;
-
+            old = new_state.pack;
             new_state.unpack.latch = 1;
-            locked_pack = new_state.pack;
+            if(change_version) new_state.unpack.node_version++;
+            desired = new_state.pack;
         }
     }
     
-    void unlock() {
+    void unlock(bool change_version = true) {
         state_t new_state = pack;
         new_state.unpack.latch = 0;
-        uint64_t unlocked_pack = new_state.pack;
-        new_state.unpack.latch = 1;
-        uint64_t locked_pack = new_state.pack;
+        if(change_version) new_state.unpack.node_version++;
+        uint64_t desired = new_state.pack;
+        uint64_t old;
 
-        __sync_bool_compare_and_swap((uint64_t *)&(this->pack), locked_pack, unlocked_pack);
+        __atomic_exchange(&(this->pack), &desired, &old, __ATOMIC_ACQUIRE);
     }
 
     inline uint64_t add(int8_t idx, int8_t slot) {
@@ -174,6 +174,7 @@ public:
             state_t new_state = state_;
             if(leftmost_ptr_ == NULL) {
                 split_node = new Node;
+                split_node->state_.lock();
                 for(int i = m; i < state_.unpack.count; i++) {
                     int8_t slotid = state_.read(i);
                     split_node->append(recs_[slotid], j, j);
@@ -184,6 +185,7 @@ public:
             } else {
                 int8_t slotid = state_.read(m);
                 split_node = new Node();
+                split_node->state_.lock();
                 split_node->leftmost_ptr_ = recs_[slotid].val;
 
                 for(int i = m + 1; i < state_.unpack.count; i++) {
@@ -213,14 +215,11 @@ public:
             // go on the insertion
             if(k < split_k) {
                 insertone(k, (char *)v);
-                state_.unlock();
             } else {
-                split_node->state_.lock();
-                state_.unlock();
-                    split_node->insertone(k, (char *)v);
-                split_node->state_.unlock();
+                split_node->insertone(k, (char *)v);                
             }
-
+            split_node->state_.unlock();
+            state_.unlock();
             return true;
         } else {
             insertone(k, (char *)v);
@@ -231,13 +230,19 @@ public:
     }
 
     char * get_child(_key_t k) { 
-    // use optimized lock coupling to coordinate reader with writer
-        retry:
+        // use optimized lock to coordinate reader with writer
+        get_retry:
         uint64_t old_version = state_.unpack.node_version;
+        barrier();
 
         Record &sibling = siblings_[state_.unpack.sibling_version]; // the sibling is updated atomically, we are safe here
         if(k >= sibling.key) { // if the node has splitted and k to find is in next node 
             Node * sib_node = (Node *)galc->absolute(sibling.val);
+            
+            barrier();
+            if(old_version != state_.unpack.node_version || old_version % 2 != 0) {
+                goto get_retry;
+            }
             return sib_node->get_child(k);
         }
 
@@ -256,7 +261,10 @@ public:
             else 
                 ret =  NULL;
             
-            if(old_version != state_.unpack.node_version) goto retry;
+            barrier();
+            if(old_version != state_.unpack.node_version || old_version % 2 != 0) {
+                goto get_retry;
+            }
             return ret;
         } else {
             int8_t slotid = 0, pos = state_.unpack.count;
@@ -274,12 +282,24 @@ public:
             else 
                 ret = recs_[state_.read(pos - 1)].val;
             
-            if(old_version != state_.unpack.node_version) goto retry;
+            barrier();
+            if(old_version != state_.unpack.node_version || old_version % 2 != 0) {
+                goto get_retry;
+            }
             return ret;
         }
     }
 
     bool update(_key_t k, uint64_t v) {
+        state_.lock(false);
+
+        Record &sibling = siblings_[state_.unpack.sibling_version]; // the sibling is updated atomically, we are safe here
+        if(k >= sibling.key) { // if the node has splitted and k to find is in next node 
+            Node * sib_node = (Node *)galc->absolute(sibling.val);
+            state_.unlock(false);
+            return sib_node->update(k, v);
+        }
+
         uint64_t slotid = 0;
         for(int i = 0; i < state_.unpack.count; i++) {
             slotid = state_.read(i);
@@ -288,22 +308,24 @@ public:
             }
         }
 
+        bool found = false;
         if (recs_[slotid].key == k) {
             recs_[slotid].val = (char *)v;
             clwb(&recs_[slotid], sizeof(Record));
-
-            return true;
-        } else {
-            return false;
+            found = true;
         }
+
+        state_.unlock(false);
+        return found;
     }
 
     bool remove(_key_t k) {
-    //TODO: will remove race with insert ?
         // Non-SMO delete takes only one clwb 
+        state_.lock();
         Record &sibling = siblings_[state_.unpack.sibling_version];
         if(k >= sibling.key) { // if the node has splitted and k to find is in next node 
             Node * sib_node = (Node *)galc->absolute(sibling.val);
+            state_.unlock();
             return sib_node->remove(k);
         }
 
@@ -318,8 +340,10 @@ public:
             if(recs_[slotid].key == k) {
                 uint64_t newpack = state_.remove(idx);
                 persist_assign(&(state_.pack), newpack);
+                state_.unlock();
                 return true;
             } else {
+                state_.unlock();
                 return false;
             }
         } else {
@@ -335,7 +359,8 @@ public:
                 */
             uint64_t newpack = state_.remove(idx - 1);
             persist_assign(&(state_.pack), newpack);
-
+            
+            state_.unlock();
             return true;
         }
     }
@@ -431,8 +456,12 @@ public:
     }
 
     void get_lrchild(_key_t k, Node * & left, Node * & right) {
-        retry:
+        get_retry:
         uint64_t old_version = state_.unpack.node_version;
+        barrier();
+        if(old_version != state_.unpack.node_version || old_version % 2 != 0) {
+            goto get_retry;
+        }
 
         int16_t i = 0;
         for( ; i < state_.unpack.count; i++) {
@@ -455,7 +484,10 @@ public:
             right = (Node *)galc->absolute(recs_[state_.read(i)].val);
         }
 
-        if(old_version != state_.unpack.node_version) goto retry;
+        barrier();
+        if(old_version != state_.unpack.node_version || old_version % 2 != 0) {
+            goto get_retry;
+        }
         return ;
     }
 };
