@@ -35,7 +35,7 @@ int main(int argc, char ** argv) {
         num_threads = atoi(argv[1]);
     }
     // open the data file
-    std::string filename = "dataset.dat";
+    std::string filename = "/home/lyp/TLBtree/Concurrent/build/dataset.dat";
     std::ifstream fin(filename.c_str(), std::ios::binary);
     if(!fin) {
         cout << "File not exists or Open error\n";

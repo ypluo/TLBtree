@@ -101,7 +101,6 @@ public:
         uint64_t add_value = (uint64_t)slot << ((15 - idx) * 4);
         new_state.unpack.slotArray = ((p & (~mask)) + add_value + ((p & mask) >> 4)) >> 12;
         new_state.unpack.count++;
-        new_state.unpack.node_version++;
 
         return new_state.pack;
     }
@@ -113,7 +112,6 @@ public:
         uint64_t mask   = 0xffffffffffffffff >> (idx * 4);
         new_state.unpack.slotArray = ((p & ~mask) + ((p & (mask>>4)) << 4)) >> 12;
         new_state.unpack.count--;
-        new_state.unpack.node_version++;
 
         return new_state.pack;
     }
@@ -207,7 +205,6 @@ public:
             siblings_[(state_.unpack.sibling_version + 1) % 2] = {split_k, (char *)galc->relative(split_node)};
             // persist_assign the state field
             new_state.unpack.sibling_version = (state_.unpack.sibling_version + 1) % 2;
-            new_state.unpack.node_version++;
             mfence(); // a barrier here to make sure all the update is persisted to storage
 
             persist_assign(&(state_.pack), new_state.pack);
@@ -442,7 +439,6 @@ public:
         Record tmp = right->siblings_[right->state_.unpack.sibling_version];
         left->siblings_[(left->state_.unpack.sibling_version + 1) % 2] = tmp;
         new_state.unpack.sibling_version = (left->state_.unpack.sibling_version + 1) % 2;
-        new_state.unpack.node_version++; // mark the node is modified
         clwb(left, sizeof(Node)); // persist the whole leaf node
 
         // persist_assign the state_ field
@@ -450,7 +446,7 @@ public:
         left->state_.pack = new_state.pack;
         clwb(left, 64);
 
-        left->state_.lock();
+        left->state_.unlock();
 
         galc->free(right); // WARNING: persistent memory leak here
     }
