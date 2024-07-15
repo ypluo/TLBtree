@@ -1,5 +1,4 @@
-Implementation of the paper "TLBtree: A Read/Write-Optimized Tree Index for Non-Volatile Memory", 
-which is to appear in ICDE 2021.
+Implementation of the paper "TLBtree: A Read/Write-Optimized Tree Index for Non-Volatile Memory (ICDE'21)" and paper "Two Birds with One Stone: Boosting Both Search and Write Performance for Tree Indices on Persistent Memory (TECS'21)".
 
 TLBtree is a read/write-optimized persistent index for NVM-only Memory System. It is composed of a read-optimized top layer and a NVM-friendly write-optimized down layer. The top layer is read frequently, so we adpot a less-mutable and cache-friendly design; The down layer is write frequently and should be carefully guarded by persistent instructions (e.g. clwb and sfence), so we employ a structure with low persistent cost on real NVM enviroment.
 
